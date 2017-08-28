@@ -6,6 +6,9 @@ TARGET_SCREEN_WIDTH := 1080
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.sf.lcd_density=480
 
+PRODUCT_PROPERTY_OVERRIDES += \
+    debug.hwui.use_buffer_age=false
+
 PRODUCT_AAPT_CONFIG := normal
 PRODUCT_AAPT_PREF_CONFIG := xxhdpi
 
