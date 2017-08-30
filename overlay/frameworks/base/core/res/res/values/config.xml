@@ -161,4 +161,7 @@
         <item>"/system/framework/arm64/boot.oat"</item>
         <item>"/system/framework/arm64/boot-core-libart.oat"</item>
    </string-array>
+
+   <!-- Navigation Bar -->
+   <bool name="config_showNavigationBar">true</bool>
 </resources>
