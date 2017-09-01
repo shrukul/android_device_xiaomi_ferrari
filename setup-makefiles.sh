@@ -18,7 +18,6 @@
 
 set -e
 
-# Required!
 DEVICE=ferrari
 VENDOR=xiaomi
 
