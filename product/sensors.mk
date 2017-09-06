@@ -5,7 +5,7 @@ PRODUCT_PACKAGES += \
 
 # Multi HAL configuration file
 PRODUCT_COPY_FILES += \
-    device/xiaomi/ferrari/sensors/etc/hals.conf:system/etc/sensors/hals.conf
+    device/xiaomi/ferrari/sensors/etc/hals.conf:vendor/etc/sensors/hals.conf
 
 # Permissions
 PRODUCT_COPY_FILES += \

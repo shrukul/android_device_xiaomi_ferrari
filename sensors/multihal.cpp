@@ -14,32 +14,33 @@
  * limitations under the License.
  */
 
-#include <hardware/sensors.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <dirent.h>
-#include <math.h>
-#include <poll.h>
-#include <pthread.h>
-#include <cutils/atomic.h>
+#include "SensorEventQueue.h"
 
 #define LOG_NDEBUG 1
 #include <cutils/log.h>
+#include <cutils/atomic.h>
+#include <hardware/sensors.h>
 
 #include <vector>
 #include <string>
 #include <fstream>
 #include <map>
-#include <string>
 
-#include <stdio.h>
+#include <unordered_map>
+
+#include <dirent.h>
 #include <dlfcn.h>
-#include <SensorEventQueue.h>
-
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <math.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 
-static const char* CONFIG_FILENAME = "/system/etc/sensors/hals.conf";
+
+static const char* CONFIG_FILENAME = "/vendor/etc/sensors/hals.conf";
 static const int MAX_CONF_LINE_LENGTH = 1024;
 
 static pthread_mutex_t init_modules_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -56,6 +57,13 @@ bool waiting_for_data = false;
  * Vector of sub modules, whose indexes are referred to in this file as module_index.
  */
 static std::vector<hw_module_t *> *sub_hw_modules = NULL;
+
+/*
+ * Map to retrieve the API version of each sub_hw_module.
+ */
+static std::unordered_map<hw_module_t *, int> *sub_hw_versions = NULL;
+
+/*
 
 /*
  * Comparable class that globally identifies a sensor, by module index and local handle.
@@ -258,16 +266,6 @@ int sensors_poll_context_t::get_device_version_by_handle(int handle) {
     }
 }
 
-// Android L requires sensor HALs to be either 1_0 or 1_3 compliant
-#define HAL_VERSION_IS_COMPLIANT(version)  \
-    (version == SENSORS_DEVICE_API_VERSION_1_0 || version >= SENSORS_DEVICE_API_VERSION_1_3)
-
-// Returns true if HAL is compliant, false if HAL is not compliant or if handle is invalid
-static bool halIsCompliant(sensors_poll_context_t *ctx, int handle) {
-    int version = ctx->get_device_version_by_handle(handle);
-    return version != -1 && HAL_VERSION_IS_COMPLIANT(version);
-}
-
 static bool halIsAPILevelCompliant(sensors_poll_context_t *ctx, int handle, int level) {
     int version = ctx->get_device_version_by_handle(handle);
     return version != -1 && (version >= level);
@@ -295,7 +293,7 @@ int sensors_poll_context_t::activate(int handle, int enabled) {
     ALOGV("activate");
     int local_handle = get_local_handle(handle);
     sensors_poll_device_t* v0 = this->get_v0_device_by_handle(handle);
-    if (halIsCompliant(this, handle) && local_handle >= 0 && v0) {
+    if (local_handle >= 0 && v0) {
         retval = v0->activate(v0, local_handle, enabled);
     } else {
         ALOGE("IGNORING activate(enable %d) call to non-API-compliant sensor handle=%d !",
@@ -310,7 +308,7 @@ int sensors_poll_context_t::setDelay(int handle, int64_t ns) {
     ALOGV("setDelay");
     int local_handle = get_local_handle(handle);
     sensors_poll_device_t* v0 = this->get_v0_device_by_handle(handle);
-    if (halIsCompliant(this, handle) && local_handle >= 0 && v0) {
+    if (local_handle >= 0 && v0) {
         retval = v0->setDelay(v0, local_handle, ns);
     } else {
         ALOGE("IGNORING setDelay() call for non-API-compliant sensor handle=%d !", handle);
@@ -388,8 +386,37 @@ int sensors_poll_context_t::batch(int handle, int flags, int64_t period_ns, int6
     int retval = -EINVAL;
     int local_handle = get_local_handle(handle);
     sensors_poll_device_1_t* v1 = this->get_v1_device_by_handle(handle);
-    if (halIsCompliant(this, handle) && local_handle >= 0 && v1) {
-        retval = v1->batch(v1, local_handle, flags, period_ns, timeout);
+    if (local_handle >= 0 && v1) {
+        if (halIsAPILevelCompliant(this, handle, SENSORS_DEVICE_API_VERSION_1_1)) {
+            retval = v1->batch(v1, local_handle, flags, period_ns, timeout);
+        } else {
+            // NOTE: unlike setDelay(), batch() can be called when the
+            // sensor is disabled.
+
+            // Negative values are not allowed
+            if (period_ns < 0 || timeout < 0) {
+                ALOGE("%s: Invalid parameters", __func__);
+                return -EINVAL;
+            }
+
+            // The HAL should silently clamp period_ns. Here it is assumed
+            // that maxDelay and minDelay are set properly
+            int sub_index = get_module_index(handle);
+            int maxDelay = global_sensors_list[sub_index].maxDelay;
+            int minDelay = global_sensors_list[sub_index].minDelay;
+            if (period_ns < minDelay) {
+                period_ns = minDelay;
+            } else if (period_ns > maxDelay) {
+                period_ns = maxDelay;
+            }
+
+            retval = v1->setDelay((sensors_poll_device_t*)v1, handle, period_ns);
+
+            // Batch should only fail for internal errors
+            if (retval < 0) {
+                ALOGE("setDelay() returned %d", retval);
+            }
+        }
     } else {
         ALOGE("IGNORING batch() call to non-API-compliant sensor handle=%d !", handle);
     }
@@ -402,8 +429,15 @@ int sensors_poll_context_t::flush(int handle) {
     int retval = -EINVAL;
     int local_handle = get_local_handle(handle);
     sensors_poll_device_1_t* v1 = this->get_v1_device_by_handle(handle);
-    if (halIsCompliant(this, handle) && local_handle >= 0 && v1) {
-        retval = v1->flush(v1, local_handle);
+    if (local_handle >= 0 && v1) {
+        if (halIsAPILevelCompliant(this, handle, SENSORS_DEVICE_API_VERSION_1_1)) {
+            retval = v1->flush(v1, local_handle);
+        } else {
+            // FIXME: for now sensorservice allows -EINVAL as return value
+            // for non-oneshot sensors. This may change in future and flush()
+            // will need to generate META_DATA_FLUSH_COMPLETE events.
+            retval = -EINVAL;
+        }
     } else {
         ALOGE("IGNORING flush() call to non-API-compliant sensor handle=%d !", handle);
     }
@@ -470,10 +504,9 @@ static int device__poll(struct sensors_poll_device_t *dev, sensors_event_t* data
 }
 
 static int device__batch(struct sensors_poll_device_1 *dev, int handle,
-        int flags, int64_t period_ns, int64_t timeout) {
+        int flags __unused, int64_t period_ns, int64_t timeout __unused) {
     sensors_poll_context_t* ctx = (sensors_poll_context_t*) dev;
-    (void)(flags);
-    (void)(timeout);
+    // HAL doesn't like batch mode, call setDelay instead
     return ctx->setDelay(handle, period_ns);
 }
 
@@ -500,6 +533,29 @@ static bool starts_with(const char* s, const char* prefix) {
     return s_size >= prefix_size && strncmp(s, prefix, prefix_size) == 0;
 }
 
+static void add_so_module(const char* path) {
+    const char* sym = HAL_MODULE_INFO_SYM_AS_STR;
+    void* lib_handle = dlopen(path, RTLD_LAZY);
+    if (lib_handle == NULL) {
+        ALOGW("dlerror(): %s", dlerror());
+    } else {
+        ALOGI("Loaded library from %s", path);
+        ALOGV("Opening symbol \"%s\"", sym);
+        // clear old errors
+        dlerror();
+        struct hw_module_t* module = (hw_module_t*) dlsym(lib_handle, sym);
+        const char* error;
+        if ((error = dlerror()) != NULL) {
+            ALOGW("Error calling dlsym: %s", error);
+        } else if (module == NULL) {
+            ALOGW("module == NULL");
+        } else {
+            ALOGV("Loaded symbols from \"%s\"", sym);
+            sub_hw_modules->push_back(module);
+        }
+    }
+}
+
 /*
  * Adds valid paths from the config file to the vector passed in.
  * The vector must not be null.
@@ -519,6 +575,22 @@ static void get_so_paths(std::vector<std::string> *so_paths) {
     }
 }
 
+ /*
+ + * Fix the flags of the sensor to be compliant with the API version
+ + * reported by the wrapper.
+ + */
+ static void fix_sensor_flags(int version, sensor_t& sensor) {
+     if (version < SENSORS_DEVICE_API_VERSION_1_3) {
+         if (sensor.type == SENSOR_TYPE_PROXIMITY ||
+                 sensor.type == SENSOR_TYPE_TILT_DETECTOR) {
+             int new_flags = SENSOR_FLAG_WAKE_UP | SENSOR_FLAG_ON_CHANGE_MODE;
+             ALOGV("Changing flags of handle=%d from %x to %x",
+                     sensor.handle, sensor.flags, new_flags);
+             sensor.flags = new_flags;
+         }
+     }
+ }
+
 /*
  * Ensures that the sub-module array is initialized.
  * This can be first called from get_sensors_list or from open_sensors.
@@ -529,35 +601,11 @@ static void lazy_init_modules() {
         pthread_mutex_unlock(&init_modules_mutex);
         return;
     }
-    std::vector<std::string> so_paths;
-    get_so_paths(&so_paths);
 
     // dlopen the module files and cache their module symbols in sub_hw_modules
     sub_hw_modules = new std::vector<hw_module_t *>();
     dlerror(); // clear any old errors
-    const char* sym = HAL_MODULE_INFO_SYM_AS_STR;
-    for (std::vector<std::string>::iterator it = so_paths.begin(); it != so_paths.end(); it++) {
-        const char* path = it->c_str();
-        void* lib_handle = dlopen(path, RTLD_LAZY);
-        if (lib_handle == NULL) {
-            ALOGW("dlerror(): %s", dlerror());
-        } else {
-            ALOGI("Loaded library from %s", path);
-            ALOGV("Opening symbol \"%s\"", sym);
-            // clear old errors
-            dlerror();
-            struct hw_module_t* module = (hw_module_t*) dlsym(lib_handle, sym);
-            const char* error;
-            if ((error = dlerror()) != NULL) {
-                ALOGW("Error calling dlsym: %s", error);
-            } else if (module == NULL) {
-                ALOGW("module == NULL");
-            } else {
-                ALOGV("Loaded symbols from \"%s\"", sym);
-                sub_hw_modules->push_back(module);
-            }
-        }
-    }
+    add_so_module("libsensors.lsm6db0.so");
     pthread_mutex_unlock(&init_modules_mutex);
 }
 
@@ -625,12 +673,18 @@ static void lazy_init_sensors_list() {
                 mutable_sensor_list[mutable_sensor_index].maxRange = 5.0;
             }
 
+            int version = sub_hw_versions->at(*it);
+            fix_sensor_flags(version, mutable_sensor_list[mutable_sensor_index]);
+
             mutable_sensor_index++;
         }
         module_index++;
     }
     // Set the const static global_sensors_list to the mutable one allocated by this function.
     global_sensors_list = mutable_sensor_list;
+
+    delete sub_hw_versions;
+    sub_hw_versions = NULL;
 
     pthread_mutex_unlock(&init_sensors_mutex);
     ALOGV("end lazy_init_sensors_list");
@@ -656,7 +710,7 @@ struct sensors_module_t HAL_MODULE_INFO_SYM = {
     .common = {
         .tag = HARDWARE_MODULE_TAG,
         .version_major = 1,
-        .version_minor = 3,
+        .version_minor = 1,
         .id = SENSORS_HARDWARE_MODULE_ID,
         .name = "MultiHal Sensor Module",
         .author = "Google, Inc",
@@ -666,6 +720,10 @@ struct sensors_module_t HAL_MODULE_INFO_SYM = {
     },
     .get_sensors_list = module__get_sensors_list
 };
+
+struct sensors_module_t *get_multi_hal_module_info() {
+    return (&HAL_MODULE_INFO_SYM);
+}
 
 static int open_sensors(const struct hw_module_t* hw_module, const char* name,
         struct hw_device_t** hw_device_out) {
@@ -677,7 +735,7 @@ static int open_sensors(const struct hw_module_t* hw_module, const char* name,
     sensors_poll_context_t *dev = new sensors_poll_context_t();
     memset(dev, 0, sizeof(sensors_poll_device_1_t));
     dev->proxy_device.common.tag = HARDWARE_DEVICE_TAG;
-    dev->proxy_device.common.version = SENSORS_DEVICE_API_VERSION_1_3;
+    dev->proxy_device.common.version = SENSORS_DEVICE_API_VERSION_1_4;
     dev->proxy_device.common.module = const_cast<hw_module_t*>(hw_module);
     dev->proxy_device.common.close = device__close;
     dev->proxy_device.activate = device__activate;
@@ -689,6 +747,8 @@ static int open_sensors(const struct hw_module_t* hw_module, const char* name,
 
     dev->nextReadIndex = 0;
 
+    sub_hw_versions = new std::unordered_map<hw_module_t *, int>();
+
     // Open() the subhal modules. Remember their devices in a vector parallel to sub_hw_modules.
     for (std::vector<hw_module_t*>::iterator it = sub_hw_modules->begin();
             it != sub_hw_modules->end(); it++) {
@@ -696,13 +756,10 @@ static int open_sensors(const struct hw_module_t* hw_module, const char* name,
         struct hw_device_t* sub_hw_device;
         int sub_open_result = sensors_module->common.methods->open(*it, name, &sub_hw_device);
         if (!sub_open_result) {
-            if (!HAL_VERSION_IS_COMPLIANT(sub_hw_device->version)) {
-                ALOGE("SENSORS_DEVICE_API_VERSION_1_3 or newer is required for all sensor HALs");
-                ALOGE("This HAL reports non-compliant API level : %s",
-                        apiNumToStr(sub_hw_device->version));
-                ALOGE("Sensors belonging to this HAL will get ignored !");
-            }
+            ALOGV("This HAL reports API level : %s",
+                    apiNumToStr(sub_hw_device->version));
             dev->addSubHwDevice(sub_hw_device);
+	    sub_hw_versions->insert(std::make_pair(*it, sub_hw_device->version));
         }
     }
 
