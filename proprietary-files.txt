@@ -475,11 +475,11 @@ vendor/lib/libOmxAacDec.so
 vendor/lib/libOmxEvrcDec.so
 vendor/lib/libOmxQcelp13Dec.so
 
-# Perf (from kipper)
-bin/msm_irqbalance|fd509d009639a58fc9cda41d07375f3367e56e7f
-vendor/bin/perfd|9883cb98a52109728c0344c4a853efb94e41e31d
-vendor/lib64/libqti-perfd-client.so|69a9bee9b3683047cda4355b0b79114976dda896
-vendor/lib/libqti-perfd-client.so|c7f541d316b81dd9a5c05f9203a4c9d3cc551071
+# Perf
+bin/msm_irqbalance
+vendor/bin/perfd
+vendor/lib64/libqti-perfd-client.so
+vendor/lib/libqti-perfd-client.so
 
 # Postprocessing
 bin/mm-pp-daemon
