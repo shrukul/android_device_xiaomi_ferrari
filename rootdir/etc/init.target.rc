@@ -28,7 +28,7 @@
 #
 
 on init
-    export LD_SHIM_LIBS /system/bin/mm-pp-daemon|libcamera_shim.so
+    export LD_SHIM_LIBS /system/bin/mm-pp-daemon|libcamera_shim.so:/system/vendor/lib64/libizat_core.so|libshims_get_process_name.so
 
 on post-fs-data
     chown system system /dev/sysmatdrv
