@@ -541,6 +541,8 @@ etc/permissions/qcrilhook.xml|9fc58a3d54d20ac1d53bab14608815121aefbce5
 -framework/qcrilhook.jar|4ac8f925c1e76da54279867a14c32e5bc868b6df
 lib64/librilqmiservices.so|f2e5672219ea59c479f2389c70ac0907a7a78265
 -priv-app/qcrilmsgtunnel/qcrilmsgtunnel.apk|8ca1e2e05596914c57d3a4ce0f367d810da7bb7f
+-lib/librmnetctl.so|8dd65bec86213535d2eed6660746df121d496b60
+-lib64/librmnetctl.so|c7e114e452f09c70cbfdd0a8945e949543d0f85b
 vendor/lib64/libcneapiclient.so|1c2dc26dbeba68f77532554d8f6d1c66bf100eaf
 vendor/lib64/libconfigdb.so|672cef86baab5ed9e4683c527f762c8accdff493
 vendor/lib64/liblqe.so|cb61ddbbd43e46ae56ef5f98c47b631d58808326
@@ -596,3 +598,6 @@ vendor/lib/mediadrm/libwvdrmengine.so|416e44ba482f1f97258ff8793b0a810219ac632d
 
 # WiFi
 bin/readmac|d3d3c6fdf9edccaf0b0c1d8fe9638a796899f3d6
+
+# Misc
+-vendor/lib64/libstlport.so|4aa475ffc617a7af15ec58bd41e850de9e5c3541
