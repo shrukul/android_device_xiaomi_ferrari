@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "SensorEventQueue.h"
+//#include "SensorEventQueue.h"
 
 #define LOG_NDEBUG 1
 #include <cutils/log.h>
