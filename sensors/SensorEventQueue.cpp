@@ -19,7 +19,7 @@
 #include <pthread.h>
 #include <cutils/log.h>
 
-#include "SensorEventQueue.h"
+//#include "SensorEventQueue.h"
 
 SensorEventQueue::SensorEventQueue(int capacity) {
     mCapacity = capacity;

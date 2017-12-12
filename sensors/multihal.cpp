@@ -34,7 +34,7 @@
 
 #include <stdio.h>
 #include <dlfcn.h>
-#include <SensorEventQueue.h>
+//#include <SensorEventQueue.h>
 
 #include <limits.h>
 #include <stdlib.h>
